@@ -5,11 +5,12 @@ require('dotenv').config()
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
-mongoose.connect(process.env.MONGO_URI);//no longer accept callback function in the connect()
+mongoose.connect(process.env.MONGO_URI);
 
 const userSchema = new Schema({
   username: String,
 },
+{versionKey: false}                             
 );
 const User = mongoose.model('User', userSchema);
 
@@ -22,13 +23,14 @@ const exerciseSchema = new Schema({
   description: String,
   duration: Number,
   date: Date,
-});
+},
+{versionKey: false});
 
 const Exercise = mongoose.model('Exercise', exerciseSchema);
 
 app.use(cors())
 app.use(express.static('public'))
-app.use(express.urlencoded({extended:true}));
+app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 });
@@ -36,43 +38,44 @@ app.get('/', (req, res) => {
 app.get('/api/users', async (req, res) => {
   const users = await User.find({}).select("_id username");
   res.json(users);
-})  
+})
 
 app.get('/api/users/:_id/logs', async (req, res) => {
   const id = req.params._id;
   const { from, to, limit } = req.query;
-  const user = await User.findById(id);
-  if(!user) {
+ 
+  const findUser = await User.findById(id);
+  if(!findUser) {
     res.send("The user does not exist")
-    return;
+  }
+  const filter = {
+    user_id: id, 
+  }
+
+  if (from || to) {
+  const dateFilter = {
+      '$gte': new Date(from),
+      '$lte': new Date(to),
+    }
+  filter.date = dateFilter;
+  }else{
+    res.send("Please input dates to search");
   }
   
-  let dateData = {};
-  if(from) {
-    dateData["$gte"] = new Date(from)
-  }
-  if(to) {
-    dateData["$lte"] = new Date(to)
-  }
-  let filter = {
-    user_id: id
-  }
-  if(from || to) {
-    filter.date = dateData;
-  }
-  const exerciseData = await Exercise.find(filter).limit(+limit ?? 500)
+  
+  const exerciseData = await Exercise.find(filter).limit(+limit ?? 50)
 
-  const log = exerciseData.map((d) => ({
+  const logArr = exerciseData.map((d) => ({
     description: d.description,
     duration: d.duration,
     date: d.date.toDateString(),
   }))
 
   res.json({
-    username: user.username,
+    username: findUser.username,
     count: exerciseData.length,
-    _id: user.user_id,
-    log,
+    _id: findUser.user_id,
+    log: logArr
   })
 });
 
@@ -80,54 +83,44 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 app.post('/api/users', async (req, res) => {
   const username = req.body.username;
   const user = await User.findOne({ username });
-  try{
-    if(!user) {
-      const newUser = new User({
-        username: username,
+  
+    if (user) return res.json(user);
+  
+    const newUser = new User({
+        username,
       })
-      const user = await newUser.save();
-      res.json(user);
-    }
-      res.json(user);
-  }catch(error){
-    console.log(error)
-  }
+    const saveUser = await newUser.save();
+     res.json(saveUser)   
 });
 
 
 app.post('/api/users/:_id/exercises', async (req, res) => {
-  const id = req.params._id; 
-  const { description, duration, date } = req.body;
-
-  try{
-    const user = await User.findById(id)
-    if(!user) {
-      res.send("The user does not exist")
-    }else {
-      const newExercise = new Exercise({ 
-        user_id: user._id,
-        username: user.username,
+  const id = req.params._id;
+  const description = req.body.description;
+  const duration = req.body.duration;
+  const date = req.body.date ? new Date(req.body.date) : new Date();
+  const findUser = await User.findById(id)
+    if(findUser) {
+      const newExercise = new Exercise({
+        user_id: findUser._id,
+        username: findUser.username,
         description,
-        duration, 
-        date: date ? new Date(date) : new Date()
+        duration,
+        date,
       })
       const exercise = await newExercise.save();
       res.json({
-        _id: user._id,
-        username: user.username,
+        _id: findUser._id,
+        username: findUser.username,
         description: exercise.description,
         duration: exercise.duration,
         date: new Date(exercise.date).toDateString(),
       });
+    }else {
+      res.send("The user does not exist");
     }
-    }catch(error){
-      res.send("error occured to save the exercise");
-      console.log(error);
-    }
-  });
-
-
-
+    
+});
 
 
 const listener = app.listen(process.env.PORT || 3000, () => {
